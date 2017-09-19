@@ -10,6 +10,58 @@ IRsend *Plugin_035_irSender;
 #define PLUGIN_ID_035         35
 #define PLUGIN_NAME_035       "Infrared Transmit"
 
+
+#define DAIKIN_HDR_MARK      5100 //DAIKIN_ZERO_MARK*8
+#define DAIKIN_HDR_SPACE  2100 //DAIKIN_ZERO_MARK*4
+#define DAIKIN_ONE_SPACE  1740 
+#define DAIKIN_ONE_MARK     420
+#define DAIKIN_ZERO_MARK  420
+#define DAIKIN_ZERO_SPACE   620
+
+uint8_t get_checksum(uint8_t *data, uint8_t start, uint8_t end)
+{
+  uint8_t sum = 0;
+
+  for(uint8_t i = start; i <= end; i++)
+  {
+    sum += data[i];
+  }
+
+  return sum & 0xFF;
+}
+
+void sendDaikin(unsigned char buf[], int len, int start)
+{
+  int data2;
+
+  Plugin_035_irSender->enableIROut(34);
+   
+  Plugin_035_irSender->mark(DAIKIN_HDR_MARK);
+  Plugin_035_irSender->space(DAIKIN_HDR_SPACE);
+     
+  for (int i = start; i < start+len; i++)
+  {
+    data2=buf[i];  
+   
+    for (int j = 0; j < 8; j++)
+    {
+      if ((1 << j & data2))
+      {
+        Plugin_035_irSender->mark(DAIKIN_ONE_MARK);
+        Plugin_035_irSender->space(DAIKIN_ONE_SPACE);
+      }
+      else
+      {
+        Plugin_035_irSender->mark(DAIKIN_ZERO_MARK);
+        Plugin_035_irSender->space(DAIKIN_ZERO_SPACE);
+      }
+    }
+  }
+  
+  Plugin_035_irSender->mark(DAIKIN_ONE_MARK);
+  Plugin_035_irSender->space(DAIKIN_ZERO_SPACE);
+}
+
 boolean Plugin_035(byte function, struct EventStruct *event, String& string)
 {
   boolean success = false;
@@ -194,6 +246,37 @@ boolean Plugin_035(byte function, struct EventStruct *event, String& string)
             //addLog(LOG_LEVEL_INFO, log);
             //sprintf_P(log, PSTR("IR Params2: RAW Code:%s"), IrRaw.c_str());
             //addLog(LOG_LEVEL_INFO, log);
+          } else if(IrType.equalsIgnoreCase("DAIKIN")) {
+            addLog(LOG_LEVEL_INFO, F("IRTX :IR DAIKIN Code Sent"));
+            uint8_t data[] = {
+              0x11, 0xDA, 0x17, 0x18, // 0-3   0-3    header
+              0x04, 0x00,             // 4-5   4-5    unknown
+              0x1E,                   // 6     5      checksum 
+              0x11, 0xDA, 0x17, 0x18, // 7-10  0-3    header
+              0x00,                   // 11    4      unknown
+              0x73,                   // 12    5      mode/timer changed
+              0x00,                   // 13    6      mode changed
+              0x20,                   // 14    7      mode + on/off
+              0x1E, 0x28,             // 15-16 8-9    timer
+              0x20,                   // 17    10     temperature
+              0x16,                   // 18    11     fan speed + swing mode 
+              0x00, 0x20,             // 19-20 12-13  unknown
+              0x49                    // 21    14     checksum
+            };
+            
+            // On
+            data[14] |= 0x01;
+            
+            // Off
+            //data[14] &= 0xFE;
+            
+            data[6] = get_checksum(data, 0, 5);
+            data[21] = get_checksum(data, 7, 20);
+            
+            sendDaikin(data, 7, 0); 
+            delay(29);
+            sendDaikin(data, 14, 7); 
+
           } else {
             if (GetArgv(command, TmpStr1, 2)) IrType = TmpStr1;
             if (GetArgv(command, TmpStr1, 3)) IrCode = strtoul(TmpStr1, NULL, 16); //(long) TmpStr1
