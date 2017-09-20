@@ -10,57 +10,7 @@ IRsend *Plugin_035_irSender;
 #define PLUGIN_ID_035         35
 #define PLUGIN_NAME_035       "Infrared Transmit"
 
-
-#define DAIKIN_HDR_MARK      5100 //DAIKIN_ZERO_MARK*8
-#define DAIKIN_HDR_SPACE  2100 //DAIKIN_ZERO_MARK*4
-#define DAIKIN_ONE_SPACE  1740 
-#define DAIKIN_ONE_MARK     420
-#define DAIKIN_ZERO_MARK  420
-#define DAIKIN_ZERO_SPACE   620
-
-uint8_t get_checksum(uint8_t *data, uint8_t start, uint8_t end)
-{
-  uint8_t sum = 0;
-
-  for(uint8_t i = start; i <= end; i++)
-  {
-    sum += data[i];
-  }
-
-  return sum & 0xFF;
-}
-
-void sendDaikin(unsigned char buf[], int len, int start)
-{
-  int data2;
-
-  Plugin_035_irSender->enableIROut(34);
-   
-  Plugin_035_irSender->mark(DAIKIN_HDR_MARK);
-  Plugin_035_irSender->space(DAIKIN_HDR_SPACE);
-     
-  for (int i = start; i < start+len; i++)
-  {
-    data2=buf[i];  
-   
-    for (int j = 0; j < 8; j++)
-    {
-      if ((1 << j & data2))
-      {
-        Plugin_035_irSender->mark(DAIKIN_ONE_MARK);
-        Plugin_035_irSender->space(DAIKIN_ONE_SPACE);
-      }
-      else
-      {
-        Plugin_035_irSender->mark(DAIKIN_ZERO_MARK);
-        Plugin_035_irSender->space(DAIKIN_ZERO_SPACE);
-      }
-    }
-  }
-  
-  Plugin_035_irSender->mark(DAIKIN_ONE_MARK);
-  Plugin_035_irSender->space(DAIKIN_ZERO_SPACE);
-}
+uint8_t *base64_decode(String data, size_t *output_length);
 
 boolean Plugin_035(byte function, struct EventStruct *event, String& string)
 {
@@ -247,35 +197,90 @@ boolean Plugin_035(byte function, struct EventStruct *event, String& string)
             //sprintf_P(log, PSTR("IR Params2: RAW Code:%s"), IrRaw.c_str());
             //addLog(LOG_LEVEL_INFO, log);
           } else if(IrType.equalsIgnoreCase("DAIKIN")) {
-            addLog(LOG_LEVEL_INFO, F("IRTX :IR DAIKIN Code Sent"));
-            uint8_t data[] = {
-              0x11, 0xDA, 0x17, 0x18, // 0-3   0-3    header
-              0x04, 0x00,             // 4-5   4-5    unknown
-              0x1E,                   // 6     5      checksum 
-              0x11, 0xDA, 0x17, 0x18, // 7-10  0-3    header
-              0x00,                   // 11    4      unknown
-              0x73,                   // 12    5      mode/timer changed
-              0x00,                   // 13    6      mode changed
-              0x20,                   // 14    7      mode + on/off
-              0x1E, 0x28,             // 15-16 8-9    timer
-              0x20,                   // 17    10     temperature
-              0x16,                   // 18    11     fan speed + swing mode 
-              0x00, 0x20,             // 19-20 12-13  unknown
-              0x49                    // 21    14     checksum
-            };
-            
-            // On
-            data[14] |= 0x01;
-            
-            // Off
-            //data[14] &= 0xFE;
-            
-            data[6] = get_checksum(data, 0, 5);
-            data[21] = get_checksum(data, 7, 20);
-            
-            sendDaikin(data, 7, 0); 
+            addLog(LOG_LEVEL_DEBUG, F("IRTX :IR DAIKIN"));
+            // Serialized format arguments
+            // ID TYPE          EXAMPLE
+            // 1  Command       IRSEND
+            // 2  IrType        DAIKIN_CUSTOM
+            // 3  Hertz         34
+            // 4  HeaderMark    5100
+            // 5  HeaderSpace   2100
+            // 6  OneMark       420
+            // 7  OneSpace      1740
+            // 8  ZeroMark      420
+            // 9  ZeroSpace     620
+            // 10 Data          EdoXGAQAHhHaFxgAcwAgHiggFgAgSQ==
+            // 11 FrameSplitPos 7
+
+            unsigned int IrHz = 0;
+            unsigned int IrHeaderMark = 0;
+            unsigned int IrHeaderSpace = 0;
+            unsigned int IrOneMark = 0;
+            unsigned int IrOneSpace = 0;
+            unsigned int IrZeroMark = 0;
+            unsigned int IrZeroSpace = 0;
+            uint8_t *IrData;
+            size_t IrDataLength;
+            unsigned int IrFrameSplitPos;
+
+            if (GetArgv(command, TmpStr1, 3)) IrHz = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 4)) IrHeaderMark = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 5)) IrHeaderSpace = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 6)) IrOneMark = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 7)) IrOneSpace = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 8)) IrZeroMark = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 9)) IrZeroSpace = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 10)) IrData = base64_decode(TmpStr1, &IrDataLength);
+            if (GetArgv(command, TmpStr1, 11)) IrFrameSplitPos = str2int(TmpStr1);
+
+            // Debug dump
+            addLog(LOG_LEVEL_DEBUG, String(F("Hz: ")) + IrHz);
+            addLog(LOG_LEVEL_DEBUG, String(F("HeaderMark: ")) + IrHeaderMark);
+            addLog(LOG_LEVEL_DEBUG, String(F("HeaderSpace: ")) + IrHeaderSpace);
+            addLog(LOG_LEVEL_DEBUG, String(F("OneMark: ")) + IrOneMark);
+            addLog(LOG_LEVEL_DEBUG, String(F("OneSpace: ")) + IrOneSpace);
+            addLog(LOG_LEVEL_DEBUG, String(F("ZeroMark: ")) + IrZeroMark);
+            addLog(LOG_LEVEL_DEBUG, String(F("ZeroSpace: ")) + IrZeroSpace);
+            addLog(LOG_LEVEL_DEBUG, F("Data: "));
+            char tmp[16];
+            for (int i = 0; i < IrDataLength; i++)
+            {
+              sprintf(tmp, "0x%.2X", IrData[i]);
+              addLog(LOG_LEVEL_DEBUG, tmp);
+            }
+            addLog(LOG_LEVEL_DEBUG, String(F("DataLength: ")) + IrDataLength);
+            addLog(LOG_LEVEL_DEBUG, String(F("FrameSplitPos: ")) + IrFrameSplitPos);
+
+
+            // Configure frequency
+            Plugin_035_irSender->enableIROut(IrHz);
+
+            // First frame
+            sendDaikinHeader(IrHeaderMark, IrHeaderSpace);
+            sendDaikinData(
+              IrOneMark,
+              IrOneSpace,
+              IrZeroMark,
+              IrZeroSpace,
+              IrData,
+              0,
+              IrFrameSplitPos);
+
+            // Delay between frames
             delay(29);
-            sendDaikin(data, 14, 7); 
+
+            // Second frame
+            sendDaikinHeader(IrHeaderMark, IrHeaderSpace);
+            sendDaikinData(
+              IrOneMark,
+              IrOneSpace,
+              IrZeroMark,
+              IrZeroSpace,
+              IrData,
+              IrFrameSplitPos,
+              IrDataLength - IrFrameSplitPos);
+
+            addLog(LOG_LEVEL_DEBUG, F("IRTX :IR DAIKIN SENT"));
 
           } else {
             if (GetArgv(command, TmpStr1, 2)) IrType = TmpStr1;
@@ -307,6 +312,104 @@ boolean Plugin_035(byte function, struct EventStruct *event, String& string)
       }
   }
   return success;
+}
+
+void sendDaikinHeader(unsigned int headerMark, unsigned int headerSpace)
+{
+  Plugin_035_irSender->mark(headerMark);
+  Plugin_035_irSender->space(headerSpace);
+}
+
+void sendDaikinData(
+  unsigned int oneMark,
+  unsigned int oneSpace,
+  unsigned int zeroMark,
+  unsigned int zeroSpace,
+  uint8_t *data,
+  size_t start,
+  size_t length)
+{
+  int current;
+
+  for (int i = start; i < start + length; i++)
+  {
+    current = data[i];
+
+    for (int j = 0; j < 8; j++)
+    {
+      if ((1 << j & current))
+      {
+        Plugin_035_irSender->mark(oneMark);
+        Plugin_035_irSender->space(oneSpace);
+      }
+      else
+      {
+        Plugin_035_irSender->mark(zeroMark);
+        Plugin_035_irSender->space(zeroSpace);
+      }
+    }
+  }
+
+  Plugin_035_irSender->mark(oneMark);
+  Plugin_035_irSender->space(zeroSpace);
+}
+
+
+
+// From https://stackoverflow.com/questions/342409/how-do-i-base64-encode-decode-in-c
+static int8_t encoding_table[] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                                'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+                                'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+                                'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+                                'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+                                'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+                                'w', 'x', 'y', 'z', '0', '1', '2', '3',
+                                '4', '5', '6', '7', '8', '9', '+', '/'};
+static int8_t *decoding_table = NULL;
+static int mod_table[] = {0, 2, 1};
+
+uint8_t *base64_decode(String data, size_t *output_length) {
+    if (decoding_table == NULL) build_decoding_table();
+    size_t input_length = data.length();
+
+    if (input_length % 4 != 0) return NULL;
+
+    *output_length = input_length / 4 * 3;
+    if (data[input_length - 1] == '=') (*output_length)--;
+    if (data[input_length - 2] == '=') (*output_length)--;
+
+    uint8_t *decoded_data = static_cast<uint8_t*>(malloc(*output_length));
+    if (decoded_data == NULL) return NULL;
+
+    for (int i = 0, j = 0; i < input_length;) {
+
+        uint32_t sextet_a = data[i] == '=' ? 0 & i++ : decoding_table[data[i++]];
+        uint32_t sextet_b = data[i] == '=' ? 0 & i++ : decoding_table[data[i++]];
+        uint32_t sextet_c = data[i] == '=' ? 0 & i++ : decoding_table[data[i++]];
+        uint32_t sextet_d = data[i] == '=' ? 0 & i++ : decoding_table[data[i++]];
+
+        uint32_t triple = (sextet_a << 3 * 6)
+        + (sextet_b << 2 * 6)
+        + (sextet_c << 1 * 6)
+        + (sextet_d << 0 * 6);
+
+        if (j < *output_length) decoded_data[j++] = (triple >> 2 * 8) & 0xFF;
+        if (j < *output_length) decoded_data[j++] = (triple >> 1 * 8) & 0xFF;
+        if (j < *output_length) decoded_data[j++] = (triple >> 0 * 8) & 0xFF;
+    }
+
+    return decoded_data;
+}
+
+void build_decoding_table() {
+    decoding_table = static_cast<int8_t*>(malloc(256));
+    for (int i = 0; i < 64; i++) {
+      decoding_table[(unsigned char) encoding_table[i]] = i;
+    }
+}
+
+void base64_cleanup() {
+    free(decoding_table);
 }
 
 #endif
