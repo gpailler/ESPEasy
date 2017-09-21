@@ -196,12 +196,13 @@ boolean Plugin_035(byte function, struct EventStruct *event, String& string)
             //addLog(LOG_LEVEL_INFO, log);
             //sprintf_P(log, PSTR("IR Params2: RAW Code:%s"), IrRaw.c_str());
             //addLog(LOG_LEVEL_INFO, log);
-          } else if(IrType.equalsIgnoreCase("DAIKIN")) {
-            addLog(LOG_LEVEL_DEBUG, F("IRTX :IR DAIKIN"));
-            // Serialized format arguments
+          } else if(IrType.equalsIgnoreCase("DATA")) {
+            
+            // Arguments
+            //-----------------------------------
             // ID TYPE          EXAMPLE
             // 1  Command       IRSEND
-            // 2  IrType        DAIKIN_CUSTOM
+            // 2  IrType        DAIKIN
             // 3  Hertz         34
             // 4  HeaderMark    5100
             // 5  HeaderSpace   2100
@@ -209,79 +210,79 @@ boolean Plugin_035(byte function, struct EventStruct *event, String& string)
             // 7  OneSpace      1740
             // 8  ZeroMark      420
             // 9  ZeroSpace     620
-            // 10 Data          EdoXGAQAHhHaFxgAcwAgHiggFgAgSQ==
-            // 11 FrameSplitPos 7
+            // 10 Frame1        xxxx (base64)
+            // 11 Frame2        yyyy (base64)
+            // .. FrameX        (up to 10 frames)
 
-            unsigned int IrHz = 0;
-            unsigned int IrHeaderMark = 0;
-            unsigned int IrHeaderSpace = 0;
-            unsigned int IrOneMark = 0;
-            unsigned int IrOneSpace = 0;
-            unsigned int IrZeroMark = 0;
-            unsigned int IrZeroSpace = 0;
-            uint8_t *IrData;
-            size_t IrDataLength;
-            unsigned int IrFrameSplitPos;
+            const uint8_t MAX_FRAMES = 10;
+            
+            uint8_t hz = 0;
+            uint16_t headerMark = 0;
+            uint16_t headerSpace = 0;
+            uint16_t oneMark = 0;
+            uint16_t oneSpace = 0;
+            uint16_t zeroMark = 0;
+            uint16_t zeroSpace = 0;
 
-            if (GetArgv(command, TmpStr1, 3)) IrHz = str2int(TmpStr1);
-            if (GetArgv(command, TmpStr1, 4)) IrHeaderMark = str2int(TmpStr1);
-            if (GetArgv(command, TmpStr1, 5)) IrHeaderSpace = str2int(TmpStr1);
-            if (GetArgv(command, TmpStr1, 6)) IrOneMark = str2int(TmpStr1);
-            if (GetArgv(command, TmpStr1, 7)) IrOneSpace = str2int(TmpStr1);
-            if (GetArgv(command, TmpStr1, 8)) IrZeroMark = str2int(TmpStr1);
-            if (GetArgv(command, TmpStr1, 9)) IrZeroSpace = str2int(TmpStr1);
-            if (GetArgv(command, TmpStr1, 10)) IrData = base64_decode(TmpStr1, &IrDataLength);
-            if (GetArgv(command, TmpStr1, 11)) IrFrameSplitPos = str2int(TmpStr1);
+            uint8_t *frames[MAX_FRAMES];
+            size_t framesLength[MAX_FRAMES];
 
-            // Debug dump
-            addLog(LOG_LEVEL_DEBUG, String(F("Hz: ")) + IrHz);
-            addLog(LOG_LEVEL_DEBUG, String(F("HeaderMark: ")) + IrHeaderMark);
-            addLog(LOG_LEVEL_DEBUG, String(F("HeaderSpace: ")) + IrHeaderSpace);
-            addLog(LOG_LEVEL_DEBUG, String(F("OneMark: ")) + IrOneMark);
-            addLog(LOG_LEVEL_DEBUG, String(F("OneSpace: ")) + IrOneSpace);
-            addLog(LOG_LEVEL_DEBUG, String(F("ZeroMark: ")) + IrZeroMark);
-            addLog(LOG_LEVEL_DEBUG, String(F("ZeroSpace: ")) + IrZeroSpace);
-            addLog(LOG_LEVEL_DEBUG, F("Data: "));
-            char tmp[16];
-            for (int i = 0; i < IrDataLength; i++)
+            // Retrieve arguments
+            if (GetArgv(command, TmpStr1, 3)) hz = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 4)) headerMark = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 5)) headerSpace = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 6)) oneMark = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 7)) oneSpace = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 8)) zeroMark = str2int(TmpStr1);
+            if (GetArgv(command, TmpStr1, 9)) zeroSpace = str2int(TmpStr1);
+
+            // Retrieve frames arguments
+            uint8_t argIdx = 10;
+            size_t framesIdx = 0;
+            while (GetArgv(command, TmpStr1, argIdx++))
             {
-              sprintf(tmp, "0x%.2X", IrData[i]);
-              addLog(LOG_LEVEL_DEBUG, tmp);
+              if (framesIdx == MAX_FRAMES)
+              {
+                addLog(LOG_LEVEL_ERROR, F("IRTX : TOO MANY FRAMES IN ARGUMENTS."));
+                return false;
+              }
+              
+              frames[framesIdx] = base64_decode(TmpStr1, &framesLength[framesIdx]);
+              framesIdx++;
             }
-            addLog(LOG_LEVEL_DEBUG, String(F("DataLength: ")) + IrDataLength);
-            addLog(LOG_LEVEL_DEBUG, String(F("FrameSplitPos: ")) + IrFrameSplitPos);
-
 
             // Configure frequency
-            Plugin_035_irSender->enableIROut(IrHz);
+            Plugin_035_irSender->enableIROut(hz);
 
-            // First frame
-            sendDaikinHeader(IrHeaderMark, IrHeaderSpace);
-            sendDaikinData(
-              IrOneMark,
-              IrOneSpace,
-              IrZeroMark,
-              IrZeroSpace,
-              IrData,
-              0,
-              IrFrameSplitPos);
+            // Send frames
+            for (size_t idx = 0; idx < framesIdx; idx++)
+            {
+              addLog(LOG_LEVEL_ERROR, F("IRTX : FRAME."));
+              // Send header
+              sendIrPacket(headerMark, headerSpace);
 
-            // Delay between frames
-            delay(29);
+              // Send data
+              sendIrData(
+                oneMark,
+                oneSpace,
+                zeroMark,
+                zeroSpace,
+                frames[idx],
+                framesLength[idx]);
 
-            // Second frame
-            sendDaikinHeader(IrHeaderMark, IrHeaderSpace);
-            sendDaikinData(
-              IrOneMark,
-              IrOneSpace,
-              IrZeroMark,
-              IrZeroSpace,
-              IrData,
-              IrFrameSplitPos,
-              IrDataLength - IrFrameSplitPos);
+              // Send footer
+              sendIrPacket(oneMark, zeroSpace);
+  
+              // Add a delay between each frame
+              if (idx < framesIdx - 1)
+              {
+                delay(29);
+              }
 
-            addLog(LOG_LEVEL_DEBUG, F("IRTX :IR DAIKIN SENT"));
-
+              // Free each data buffer
+              free(frames[idx]);
+            }
+            
           } else {
             if (GetArgv(command, TmpStr1, 2)) IrType = TmpStr1;
             if (GetArgv(command, TmpStr1, 3)) IrCode = strtoul(TmpStr1, NULL, 16); //(long) TmpStr1
@@ -314,44 +315,38 @@ boolean Plugin_035(byte function, struct EventStruct *event, String& string)
   return success;
 }
 
-void sendDaikinHeader(unsigned int headerMark, unsigned int headerSpace)
+void sendIrPacket(uint16_t mark, uint16_t space)
 {
-  Plugin_035_irSender->mark(headerMark);
-  Plugin_035_irSender->space(headerSpace);
+  Plugin_035_irSender->mark(mark);
+  Plugin_035_irSender->space(space);
 }
 
-void sendDaikinData(
-  unsigned int oneMark,
-  unsigned int oneSpace,
-  unsigned int zeroMark,
-  unsigned int zeroSpace,
+void sendIrData(
+  uint16_t oneMark,
+  uint16_t oneSpace,
+  uint16_t zeroMark,
+  uint16_t zeroSpace,
   uint8_t *data,
-  size_t start,
   size_t length)
 {
   int current;
 
-  for (int i = start; i < start + length; i++)
+  for (size_t i = 0; i < length; i++)
   {
     current = data[i];
 
-    for (int j = 0; j < 8; j++)
+    for (size_t j = 0; j < 8; j++)
     {
       if ((1 << j & current))
       {
-        Plugin_035_irSender->mark(oneMark);
-        Plugin_035_irSender->space(oneSpace);
+        sendIrPacket(oneMark, oneSpace);
       }
       else
       {
-        Plugin_035_irSender->mark(zeroMark);
-        Plugin_035_irSender->space(zeroSpace);
+        sendIrPacket(zeroMark, zeroSpace);
       }
     }
   }
-
-  Plugin_035_irSender->mark(oneMark);
-  Plugin_035_irSender->space(zeroSpace);
 }
 
 
